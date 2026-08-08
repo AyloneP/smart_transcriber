@@ -25,6 +25,8 @@ if "audio_bytes" not in st.session_state:
     st.session_state.audio_bytes = None
 if "current_file_name" not in st.session_state:
     st.session_state.current_file_name = None
+if "active_word_id" not in st.session_state:
+    st.session_state.active_word_id = "" # שומר את ה-ID של המילה הפעילה
 
 # מילות חלל נפוצות לסינון ויזואלי
 FILLERS = ["אה", "אממ", "אהה", "אמ", "um", "uh", "mhm", "mm", "ah", "er", "hmm"]
@@ -221,6 +223,7 @@ with st.sidebar:
         st.session_state.words_data = []
         st.session_state.audio_bytes = None
         st.session_state.current_file_name = None
+        st.session_state.active_word_id = ""
         st.cache_data.clear()
         st.rerun()
 
@@ -243,6 +246,7 @@ if uploaded_file and (st.session_state.current_file_name != uploaded_file.name):
     st.session_state.words_data = []
     st.session_state.audio_bytes = uploaded_file.read()
     st.session_state.current_file_name = uploaded_file.name
+    st.session_state.active_word_id = ""
 
 if st.button("תמלל עכשיו", type="primary") and st.session_state.audio_bytes:
     if not api_key:
@@ -258,6 +262,7 @@ if st.button("תמלל עכשיו", type="primary") and st.session_state.audio_b
                     st.warning("התמלול הסתיים, אבל המודל לא זיהה שום מילים ברורות באודיו הזה.")
                 else:
                     st.session_state.words_data = result
+                    st.session_state.active_word_id = ""
                     st.success("התמלול עבר בהצלחה!")
                     st.rerun()
 
@@ -273,7 +278,7 @@ if st.session_state.words_data:
         
         with st.container(height=650):
             current_speaker = None
-            html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl; padding-bottom: 30px;'>"
+            html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl; padding-bottom: 50px;'>"
             
             for i, w in enumerate(active_words):
                 if w["speaker"] != current_speaker:
@@ -283,18 +288,24 @@ if st.session_state.words_data:
                     html_text += f"<strong style='color:#555;'>[דובר {current_speaker}]: </strong>"
                 
                 color = get_word_color(w["confidence"])
-                
                 is_filler = w.get("clean_word", "").lower().strip(",.?!") in FILLERS
                 display_text = f"[{w['word']}]" if is_filler else w['word']
                 
-                if is_filler:
-                    html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-                    html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; opacity: 0.5;' onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='0.5'\"><i>{display_text}</i></span>"
-                    html_text += "</a> "
-                else:
-                    html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-                    html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{display_text}</span>"
-                    html_text += "</a> "
+                # בדיקה האם זו המילה הלחוצה כרגע
+                is_active = (st.session_state.active_word_id == str(w['id']))
+                
+                # יצירת הסטייל של המילה (כולל מסגרת כחולה אם היא פעילה)
+                border_style = "2px solid #2196F3" if is_active else "2px solid transparent"
+                box_shadow = "0 0 8px rgba(33,150,243,0.8)" if is_active else "0 1px 2px rgba(0,0,0,0.1)"
+                opacity_val = "1" if (not is_filler or is_active) else "0.5"
+                font_start = "<i>" if is_filler else ""
+                font_end = "</i>" if is_filler else ""
+                
+                span_style = f"background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; border: {border_style}; box-shadow: {box_shadow}; opacity: {opacity_val}; display: inline-block;"
+                
+                html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
+                html_text += f"<span style='{span_style}' onmouseover=\"this.style.opacity='0.8'\" onmouseout=\"this.style.opacity='{opacity_val}'\">{font_start}{display_text}{font_end}</span>"
+                html_text += "</a> "
                 
                 if i < len(active_words) - 1:
                     next_w = active_words[i+1]
@@ -305,13 +316,31 @@ if st.session_state.words_data:
                 
             html_text += "</div>"
             
+            # הזרקת קוד JS שגולל אוטומטית למילה הפעילה
+            if st.session_state.active_word_id:
+                html_text += f"""
+                <script>
+                    setTimeout(function() {{
+                        var el = document.getElementById('{st.session_state.active_word_id}');
+                        if (el) {{
+                            el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                        }}
+                    }}, 150);
+                </script>
+                """
+            
             clicked_word_id = click_detector(html_text)
+            
+            # אם נלחצה מילה חדשה, נעדכן את הסטייט ונרענן כדי להחיל עליה את העיצוב
+            if clicked_word_id and clicked_word_id != st.session_state.active_word_id:
+                st.session_state.active_word_id = clicked_word_id
+                st.rerun()
     
     with col_edit:
         st.subheader("3. ממשק תיקון")
         
-        if clicked_word_id:
-            selected_id = int(clicked_word_id)
+        if st.session_state.active_word_id:
+            selected_id = int(st.session_state.active_word_id)
             word_obj = next((w for w in st.session_state.words_data if w["id"] == selected_id), None)
             
             if word_obj:
@@ -326,7 +355,6 @@ if st.session_state.words_data:
                 alts = [word_obj['word']] + word_obj['alternatives']
                 chosen_alt = st.selectbox("הצעות המודל:", alts)
                 
-                # --- החלק החדש: שיוך למשתמש אחר ---
                 col_text, col_speaker = st.columns([3, 1])
                 with col_text:
                     manual_text = st.text_input("תיקון ידני:", value=chosen_alt)
@@ -338,13 +366,14 @@ if st.session_state.words_data:
                 with col_btn1:
                     if st.button("✅ שמור תיקון", use_container_width=True):
                         st.session_state.words_data[selected_id]["word"] = manual_text
-                        st.session_state.words_data[selected_id]["speaker"] = new_speaker # מעדכן את הדובר
+                        st.session_state.words_data[selected_id]["speaker"] = new_speaker
                         st.session_state.words_data[selected_id]["confidence"] = 1.0 
                         st.rerun()
                 
                 with col_btn2:
                     if st.button("🗑️ מחק מילה", use_container_width=True):
                         st.session_state.words_data[selected_id]["deleted"] = True
+                        st.session_state.active_word_id = "" # מנקה את הבחירה
                         st.rerun()
                 
                 st.divider()
@@ -369,6 +398,7 @@ if st.session_state.words_data:
                         }
                         idx = st.session_state.words_data.index(word_obj)
                         st.session_state.words_data.insert(idx, new_word)
+                        st.session_state.active_word_id = str(new_id) # מסמן את המילה החדשה מיד
                         st.rerun()
                         
                 with col_add2:
@@ -387,6 +417,7 @@ if st.session_state.words_data:
                         }
                         idx = st.session_state.words_data.index(word_obj)
                         st.session_state.words_data.insert(idx + 1, new_word)
+                        st.session_state.active_word_id = str(new_id) # מסמן את המילה החדשה מיד
                         st.rerun()
         else:
             st.info("👈 לחץ על מילה כלשהי בטקסט מימין כדי לפתוח את ממשק התיקון שלה.")
