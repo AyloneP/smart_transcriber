@@ -7,7 +7,6 @@ import ffmpeg
 import requests
 from datetime import timedelta
 from st_click_detector import click_detector
-from pydub import AudioSegment
 
 # ==========================================
 # Application Configuration
@@ -30,14 +29,6 @@ if "current_file_name" not in st.session_state:
 # ==========================================
 # Helper Functions
 # ==========================================
-@st.cache_data(show_spinner=False)
-def load_audio_for_analysis(audio_bytes):
-    """טוען את האודיו לזיכרון עבור מדידת דציבלים בפערים"""
-    try:
-        return AudioSegment.from_file(io.BytesIO(audio_bytes))
-    except Exception as e:
-        return None
-
 @st.cache_data(show_spinner=False)
 def process_audio_cached(api_key, audio_bytes, language_choice):
     try:
@@ -210,13 +201,9 @@ with st.sidebar:
         st.success("✅ מחובר לשרתי התמלול")
     
     st.divider()
-    st.subheader("מנוע זיהוי השמטות (VAD)")
-    
-    gap_threshold = st.slider("מינימום פער זמנים (שניות)", min_value=0.3, max_value=2.0, value=0.6, step=0.1, 
-                              help="חורים קטנים מזה יסוננו אוטומטית כי הם כנראה הפסקות נשימה מהירות.")
-    
-    dbfs_threshold = st.slider("רגישות לעוצמת קול (dBFS)", min_value=-60, max_value=-10, value=-40, step=1,
-                               help="אם בסשן יש מזגן רועש, המספר צריך להיות קרוב יותר ל-0 (למשל -20). אם ההקלטה שקטה, אפשר להשאיר על -40.")
+    st.subheader("הגדרות תצוגה")
+    gap_threshold = st.slider("התרעת השמטה (שניות)", min_value=0.3, max_value=2.0, value=0.6, step=0.1, 
+                              help="פער זמנים בין מילים שמעליו המערכת תציג סמל [⏳] שמתריע על שתיקה ארוכה או מילה חסרה.")
     
     st.divider()
     if st.button("איפוס מערכת (Clear Data)"):
@@ -273,9 +260,6 @@ if st.session_state.words_data:
     with col_viz:
         st.subheader("2. תמלול (לחץ על מילה כדי לתקן)")
         
-        # טוענים את האודיו לניתוח הדציבלים רק כשיש תמלול מוכן
-        audio_segment = load_audio_for_analysis(st.session_state.audio_bytes)
-        
         current_speaker = None
         html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl;'>"
         
@@ -292,31 +276,12 @@ if st.session_state.words_data:
             html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{w['word']}</span>"
             html_text += "</a> "
             
-            # --- הלוגיקה החכמה של זיהוי השמטות ---
             if i < len(active_words) - 1:
                 next_w = active_words[i+1]
                 if next_w["speaker"] == w["speaker"]:
                     gap = next_w["start"] - w["end"]
-                    
-                    # קודם כל בודקים אם הפער גדול מההגדרה (למשל חצי שנייה)
                     if gap >= gap_threshold:
-                        show_indicator = False
-                        
-                        # עכשיו בודקים אם יש באמת רעש בפער הזה
-                        if audio_segment:
-                            start_ms = int(w["end"] * 1000)
-                            end_ms = int(next_w["start"] * 1000)
-                            gap_audio = audio_segment[start_ms:end_ms]
-                            
-                            # אם העוצמה של ה"חור" גבוהה מסף הרגישות שהגדרת
-                            if gap_audio.dBFS > dbfs_threshold:
-                                show_indicator = True
-                        else:
-                            # אם משום מה הקובץ לא נטען, נציג התראה ליתר ביטחון
-                            show_indicator = True
-                            
-                        if show_indicator:
-                            html_text += f"<span style='color: #ff9800; font-size: 12px; margin: 0 4px; cursor: help;' title='זוהה סאונד במהלך שתיקה של {gap:.1f} שניות - ייתכן שהושמטה מילה'>[⏳]</span> "
+                        html_text += f"<span style='color: #ff9800; font-size: 12px; margin: 0 4px; cursor: help;' title='שתיקה של {gap:.1f} שניות - ייתכן שהושמטה מילה'>[⏳]</span> "
             
         html_text += "</div>"
         
