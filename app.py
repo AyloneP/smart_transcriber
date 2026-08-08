@@ -196,14 +196,24 @@ def generate_srt(words_data):
 
 with st.sidebar:
     st.header("הגדרות")
-    
-    # 1. שולפים את המפתח מקובץ הסודות שיצרנו
+
+    # מנסה למשוך את המפתח בסוד
     secret_key = st.secrets.get("DEEPGRAM_API_KEY", "")
-    
-    # 2. שמים אותו כברירת מחדל (value) בתוך תיבת הטקסט!
-    api_key = st.text_input("Deepgram API Key", type="password", value=secret_key)
-    
-    st.caption("השג מפתח חינמי באתר console.deepgram.com")
+
+    # אם אין מפתח סודי - הצג את התיבה. אם יש - אל תציג אותה בכלל!
+    if not secret_key:
+        api_key = st.text_input("Deepgram API Key", type="password")
+        st.caption("השג מפתח חינמי באתר console.deepgram.com")
+    else:
+        api_key = secret_key
+        st.success("✅ מחובר לשרתי התמלול")
+
+    if st.button("איפוס מערכת (Clear Data)"):
+        st.session_state.words_data = []
+        st.session_state.audio_bytes = None
+        st.session_state.current_file_name = None
+        st.cache_data.clear()
+        st.rerun()
     
     if st.button("איפוס מערכת (Clear Data)"):
         st.session_state.words_data = []
