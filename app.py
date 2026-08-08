@@ -196,10 +196,10 @@ def generate_srt(words_data):
 
 with st.sidebar:
     st.header("הגדרות")
-
+    
     # מנסה למשוך את המפתח בסוד
     secret_key = st.secrets.get("DEEPGRAM_API_KEY", "")
-
+    
     # אם אין מפתח סודי - הצג את התיבה. אם יש - אל תציג אותה בכלל!
     if not secret_key:
         api_key = st.text_input("Deepgram API Key", type="password")
@@ -207,13 +207,6 @@ with st.sidebar:
     else:
         api_key = secret_key
         st.success("✅ מחובר לשרתי התמלול")
-
-    if st.button("איפוס מערכת (Clear Data)"):
-        st.session_state.words_data = []
-        st.session_state.audio_bytes = None
-        st.session_state.current_file_name = None
-        st.cache_data.clear()
-        st.rerun()
     
     if st.button("איפוס מערכת (Clear Data)"):
         st.session_state.words_data = []
@@ -221,7 +214,8 @@ with st.sidebar:
         st.session_state.current_file_name = None
         st.cache_data.clear()
         st.rerun()
-
+    
+    
 st.subheader("1. הזנת אודיו")
 col_upload, col_lang = st.columns([7, 3])
 
