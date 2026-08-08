@@ -316,17 +316,17 @@ if st.session_state.words_data:
                 
             html_text += "</div>"
             
-            # הזרקת קוד JS שגולל אוטומטית למילה הפעילה
+           # הזרקת קוד JS שגולל אוטומטית למילה הפעילה (עוקף את חסימת ה-scripts)
             if st.session_state.active_word_id:
                 html_text += f"""
-                <script>
+                <img src="dummy_url" style="display:none;" onerror="
                     setTimeout(function() {{
                         var el = document.getElementById('{st.session_state.active_word_id}');
-                        if (el) {{
+                        if(el) {{
                             el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
                         }}
-                    }}, 150);
-                </script>
+                    }}, 300);
+                ">
                 """
             
             clicked_word_id = click_detector(html_text)
