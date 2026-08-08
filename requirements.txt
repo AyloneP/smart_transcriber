@@ -2,3 +2,4 @@ streamlit
 ffmpeg-python
 requests
 st-click-detector
+pydub

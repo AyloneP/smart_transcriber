@@ -7,6 +7,7 @@ import ffmpeg
 import requests
 from datetime import timedelta
 from st_click_detector import click_detector
+from pydub import AudioSegment
 
 # ==========================================
 # Application Configuration
@@ -30,11 +31,15 @@ if "current_file_name" not in st.session_state:
 # Helper Functions
 # ==========================================
 @st.cache_data(show_spinner=False)
+def load_audio_for_analysis(audio_bytes):
+    """טוען את האודיו לזיכרון עבור מדידת דציבלים בפערים"""
+    try:
+        return AudioSegment.from_file(io.BytesIO(audio_bytes))
+    except Exception as e:
+        return None
+
+@st.cache_data(show_spinner=False)
 def process_audio_cached(api_key, audio_bytes, language_choice):
-    """
-    Sends audio directly to Deepgram REST API.
-    Uses specific model and tier combinations based on language selection.
-    """
     try:
         url = "https://api.deepgram.com/v1/listen"
         
@@ -108,16 +113,14 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
         return {"error": str(e)}
 
 def get_word_color(confidence):
-    """Returns background color based on confidence score."""
     if confidence < 0.5:
-        return "#ff4b4b" # Red (מאוד לא בטוח)
+        return "#ff4b4b" 
     elif confidence <= 0.9:
-        return "#ffe14b" # Yellow (קצת חושש)
+        return "#ffe14b" 
     else:
-        return "#f0f2f6" # אפור בהיר למילים בטוחות - כדי שייראו לחיצות!
+        return "#f0f2f6" 
 
 def slice_audio(audio_bytes, start_sec, end_sec, padding=1.5):
-    """Slices audio with padding to provide context using ffmpeg-python."""
     try:
         start_time = max(0, start_sec - padding)
         duration = (end_sec + padding) - start_time
@@ -157,7 +160,6 @@ def slice_audio(audio_bytes, start_sec, end_sec, padding=1.5):
         return None
 
 def generate_srt(words_data):
-    """Generates SubRip Text (SRT) format."""
     active_words = [w for w in words_data if not w.get("deleted", False)]
     srt_content = ""
     chunk_index = 1
@@ -198,10 +200,8 @@ def generate_srt(words_data):
 with st.sidebar:
     st.header("הגדרות")
     
-    # מנסה למשוך את המפתח בסוד
     secret_key = st.secrets.get("DEEPGRAM_API_KEY", "")
     
-    # אם אין מפתח סודי - הצג את התיבה. אם יש - אל תציג אותה בכלל!
     if not secret_key:
         api_key = st.text_input("Deepgram API Key", type="password")
         st.caption("השג מפתח חינמי באתר console.deepgram.com")
@@ -209,6 +209,16 @@ with st.sidebar:
         api_key = secret_key
         st.success("✅ מחובר לשרתי התמלול")
     
+    st.divider()
+    st.subheader("מנוע זיהוי השמטות (VAD)")
+    
+    gap_threshold = st.slider("מינימום פער זמנים (שניות)", min_value=0.3, max_value=2.0, value=0.6, step=0.1, 
+                              help="חורים קטנים מזה יסוננו אוטומטית כי הם כנראה הפסקות נשימה מהירות.")
+    
+    dbfs_threshold = st.slider("רגישות לעוצמת קול (dBFS)", min_value=-60, max_value=-10, value=-40, step=1,
+                               help="אם בסשן יש מזגן רועש, המספר צריך להיות קרוב יותר ל-0 (למשל -20). אם ההקלטה שקטה, אפשר להשאיר על -40.")
+    
+    st.divider()
     if st.button("איפוס מערכת (Clear Data)"):
         st.session_state.words_data = []
         st.session_state.audio_bytes = None
@@ -263,10 +273,13 @@ if st.session_state.words_data:
     with col_viz:
         st.subheader("2. תמלול (לחץ על מילה כדי לתקן)")
         
+        # טוענים את האודיו לניתוח הדציבלים רק כשיש תמלול מוכן
+        audio_segment = load_audio_for_analysis(st.session_state.audio_bytes)
+        
         current_speaker = None
         html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl;'>"
         
-        for w in active_words:
+        for i, w in enumerate(active_words):
             if w["speaker"] != current_speaker:
                 if current_speaker is not None:
                     html_text += "<br><br>" 
@@ -276,9 +289,34 @@ if st.session_state.words_data:
             color = get_word_color(w["confidence"])
             
             html_text += f"<a href='#' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-            # הוספנו אפקט הצללה בריחוף כדי שירגיש אפילו יותר כמו כפתור
             html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{w['word']}</span>"
             html_text += "</a> "
+            
+            # --- הלוגיקה החכמה של זיהוי השמטות ---
+            if i < len(active_words) - 1:
+                next_w = active_words[i+1]
+                if next_w["speaker"] == w["speaker"]:
+                    gap = next_w["start"] - w["end"]
+                    
+                    # קודם כל בודקים אם הפער גדול מההגדרה (למשל חצי שנייה)
+                    if gap >= gap_threshold:
+                        show_indicator = False
+                        
+                        # עכשיו בודקים אם יש באמת רעש בפער הזה
+                        if audio_segment:
+                            start_ms = int(w["end"] * 1000)
+                            end_ms = int(next_w["start"] * 1000)
+                            gap_audio = audio_segment[start_ms:end_ms]
+                            
+                            # אם העוצמה של ה"חור" גבוהה מסף הרגישות שהגדרת
+                            if gap_audio.dBFS > dbfs_threshold:
+                                show_indicator = True
+                        else:
+                            # אם משום מה הקובץ לא נטען, נציג התראה ליתר ביטחון
+                            show_indicator = True
+                            
+                        if show_indicator:
+                            html_text += f"<span style='color: #ff9800; font-size: 12px; margin: 0 4px; cursor: help;' title='זוהה סאונד במהלך שתיקה של {gap:.1f} שניות - ייתכן שהושמטה מילה'>[⏳]</span> "
             
         html_text += "</div>"
         
@@ -317,7 +355,6 @@ if st.session_state.words_data:
                         st.session_state.words_data[selected_id]["deleted"] = True
                         st.rerun()
                 
-                # --- החלק החדש: הוספת מילה חסרה ---
                 st.divider()
                 st.write("🛠️ **המערכת השמיטה מילה?**")
                 st.caption("הקלד את המילה החסרה ולחץ איפה למקם אותה ביחס למילה שבחרת.")
@@ -326,19 +363,17 @@ if st.session_state.words_data:
                 col_add1, col_add2 = st.columns(2)
                 with col_add1:
                     if st.button("➕ הוסף לפני", use_container_width=True) and new_word_text:
-                        # יוצרים ID חדש לגמרי
                         new_id = max([w["id"] for w in st.session_state.words_data]) + 1
                         new_word = {
                             "id": new_id,
                             "word": new_word_text,
                             "start": max(0.0, word_obj["start"] - 0.1),
                             "end": word_obj["start"],
-                            "confidence": 1.0, # מילה שהוספנו ידנית היא תמיד ודאית
+                            "confidence": 1.0,
                             "speaker": word_obj["speaker"],
                             "alternatives": [],
                             "deleted": False
                         }
-                        # מכניסים לרשימה בדיוק לפני המילה שבחרנו
                         idx = st.session_state.words_data.index(word_obj)
                         st.session_state.words_data.insert(idx, new_word)
                         st.rerun()
@@ -356,7 +391,6 @@ if st.session_state.words_data:
                             "alternatives": [],
                             "deleted": False
                         }
-                        # מכניסים לרשימה מיד אחרי המילה שבחרנו
                         idx = st.session_state.words_data.index(word_obj)
                         st.session_state.words_data.insert(idx + 1, new_word)
                         st.rerun()
