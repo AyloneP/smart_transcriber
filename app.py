@@ -103,6 +103,7 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
             words_list.append({
                 "id": i,
                 "word": final_word,
+                "original_word": final_word,
                 "clean_word": clean_word, 
                 "start": word_obj["start"],
                 "end": word_obj["end"],
@@ -316,7 +317,7 @@ if st.session_state.words_data:
                 
             html_text += "</div>"
             
-           # הזרקת קוד JS שגולל אוטומטית למילה הפעילה (עוקף את חסימת ה-scripts)
+            # הזרקת קוד JS שגולל אוטומטית למילה הפעילה (עוקף את חסימת ה-scripts)
             if st.session_state.active_word_id:
                 html_text += f"""
                 <img src="dummy_url" style="display:none;" onerror="
@@ -388,6 +389,7 @@ if st.session_state.words_data:
                         new_word = {
                             "id": new_id,
                             "word": new_word_text,
+                            "original_word": None,
                             "clean_word": new_word_text,
                             "start": max(0.0, word_obj["start"] - 0.1),
                             "end": word_obj["start"],
@@ -407,6 +409,7 @@ if st.session_state.words_data:
                         new_word = {
                             "id": new_id,
                             "word": new_word_text,
+                            "original_word": None,
                             "clean_word": new_word_text,
                             "start": word_obj["end"],
                             "end": word_obj["end"] + 0.1,
@@ -425,35 +428,53 @@ if st.session_state.words_data:
     st.divider()
     st.subheader("4. ייצוא נתונים")
     
-    col_ex1, col_ex2, col_ex3 = st.columns(3)
+    col_ex1, col_ex2, col_ex3, col_ex4 = st.columns(4)
     
     final_text = " ".join([w["word"] for w in active_words])
     
+    # שחזור הטקסט המקורי (מתעלם ממילים שנוספו ידנית)
+    original_text = " ".join([w["original_word"] for w in st.session_state.words_data if w.get("original_word") is not None])
+    if not original_text:
+        original_text = final_text
+    
     with col_ex1:
         st.download_button(
-            label="📝 הורד תמלול נקי (TXT)",
+            label="📝 טקסט מתוקן (TXT)",
             data=final_text,
-            file_name="transcript.txt",
+            file_name="transcript_edited.txt",
             mime="text/plain",
-            use_container_width=True
+            use_container_width=True,
+            help="מוריד את הטקסט הסופי לאחר כל התיקונים, המחיקות והתוספות שלך."
+        )
+        
+    with col_ex2:
+        st.download_button(
+            label="📜 טקסט מקורי (TXT)",
+            data=original_text,
+            file_name="transcript_original.txt",
+            mime="text/plain",
+            use_container_width=True,
+            help="מוריד את התמלול הגולמי כפי שהתקבל במקור מהמודל, לפני שביצעת בו שינויים."
         )
     
-    with col_ex2:
+    with col_ex3:
         srt_data = generate_srt(active_words)
         st.download_button(
-            label="🎬 הורד כתוביות (SRT)",
+            label="🎬 כתוביות (SRT)",
             data=srt_data,
             file_name="subtitles.srt",
             mime="text/plain",
-            use_container_width=True
+            use_container_width=True,
+            help="קובץ כתוביות הכולל תזמונים מדויקים וחלוקה לדוברים. מיועד לעריכת וידאו."
         )
         
-    with col_ex3:
+    with col_ex4:
          json_data = json.dumps(active_words, ensure_ascii=False, indent=2)
          st.download_button(
-            label="⚙️ הורד נתונים גולמיים (JSON)",
+            label="⚙️ נתונים (JSON)",
             data=json_data,
             file_name="data.json",
             mime="application/json",
-            use_container_width=True
+            use_container_width=True,
+            help="קובץ הגיבוי הטכני של כלל מאגר הנתונים באפליקציה (למפתחים)."
         )
