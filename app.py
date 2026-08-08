@@ -13,6 +13,19 @@ from st_click_detector import click_detector
 # ==========================================
 st.set_page_config(page_title="Advanced STT - Human-in-the-Loop", layout="wide")
 
+# הזקת CSS חכם: הופך את עמודת התיקון ל"דביקה" כך שתלווה את המשתמש בגלילה
+st.markdown("""
+    <style>
+    /* מחפש את העמודה שיש בתוכה את העוגן שלנו, וגורם לה לרחף מול העיניים */
+    div[data-testid="column"]:has(#sticky-anchor) {
+        position: sticky;
+        top: 4rem;
+        align-self: flex-start;
+        z-index: 100;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🎙️ מערכת תמלול מתקדמת - Human-in-the-Loop")
 st.markdown("תמלול, זיהוי דוברים, ותיקון שגיאות אינטראקטיבי מבוסס Deepgram.")
 
@@ -286,7 +299,6 @@ if st.session_state.words_data:
             is_filler = w.get("clean_word", "").lower().strip(",.?!") in FILLERS
             display_text = f"[{w['word']}]" if is_filler else w['word']
             
-            # השינוי הקריטי: href='javascript:void(0);'
             if is_filler:
                 html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
                 html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; opacity: 0.5;' onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='0.5'\"><i>{display_text}</i></span>"
@@ -308,6 +320,9 @@ if st.session_state.words_data:
         clicked_word_id = click_detector(html_text)
     
     with col_edit:
+        # זה העוגן הנסתר! בגלל שהוא קיים בתוך העמודה הזו, היא הופכת לדביקה
+        st.markdown("<div id='sticky-anchor'></div>", unsafe_allow_html=True)
+        
         st.subheader("3. ממשק תיקון")
         
         if clicked_word_id:
