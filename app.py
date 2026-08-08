@@ -1,0 +1,356 @@
+import streamlit as st
+import os
+import io
+import json
+import tempfile
+import ffmpeg
+import requests
+from datetime import timedelta
+from st_click_detector import click_detector  # הייבוא החדש שלנו!
+
+# ==========================================
+# Application Configuration
+# ==========================================
+st.set_page_config(page_title="Advanced STT - Human-in-the-Loop", layout="wide")
+
+st.title("🎙️ מערכת תמלול מתקדמת - Human-in-the-Loop")
+st.markdown("תמלול, זיהוי דוברים, ותיקון שגיאות אינטראקטיבי מבוסס Deepgram.")
+
+# ==========================================
+# State Management
+# ==========================================
+if "words_data" not in st.session_state:
+    st.session_state.words_data = []
+if "audio_bytes" not in st.session_state:
+    st.session_state.audio_bytes = None
+if "current_file_name" not in st.session_state:
+    st.session_state.current_file_name = None
+
+# ==========================================
+# Helper Functions
+# ==========================================
+@st.cache_data(show_spinner=False)
+def process_audio_cached(api_key, audio_bytes, language_choice):
+    """
+    Sends audio directly to Deepgram REST API.
+    """
+    try:
+        url = "https://api.deepgram.com/v1/listen"
+        
+        if language_choice == "he":
+            params = {
+                "model": "general",
+                "tier": "nova-3", 
+                "language": "he",
+                "smart_format": "true",
+                "words": "true",
+                "diarize": "true"
+            }
+        else: 
+            params = {
+                "model": "nova-2",
+                "language": "en",
+                "smart_format": "true",
+                "words": "true",
+                "diarize": "true",
+                "alternatives": 3 
+            }
+        
+        headers = {
+            "Authorization": f"Token {api_key}",
+            "Content-Type": "audio/*"
+        }
+        
+        response = requests.post(url, headers=headers, params=params, data=audio_bytes)
+        
+        if response.status_code != 200:
+            return {"error": f"API Error {response.status_code}: {response.text}"}
+            
+        data = response.json()
+        
+        if "results" not in data or not data["results"].get("channels"):
+            return []
+            
+        channels = data["results"]["channels"][0]
+        
+        if not channels.get("alternatives"):
+             return []
+             
+        alternatives = channels["alternatives"]
+        primary_words = alternatives[0].get("words", [])
+        
+        words_list = []
+        
+        for i, word_obj in enumerate(primary_words):
+            word_alts = set()
+            for alt in alternatives[1:]:
+                words_in_alt = alt.get("words", [])
+                if i < len(words_in_alt):
+                    if words_in_alt[i]["word"] != word_obj["word"]:
+                        word_alts.add(words_in_alt[i]["word"])
+            
+            speaker = word_obj.get("speaker", 0)
+            
+            words_list.append({
+                "id": i,
+                "word": word_obj["word"],
+                "start": word_obj["start"],
+                "end": word_obj["end"],
+                "confidence": word_obj["confidence"],
+                "speaker": speaker,
+                "alternatives": list(word_alts),
+                "deleted": False
+            })
+            
+        return words_list
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_word_color(confidence):
+    """Returns background color based on confidence score."""
+    if confidence < 0.5:
+        return "#ff4b4b" # Red
+    elif confidence <= 0.9:
+        return "#ffe14b" # Yellow
+    else:
+        return "transparent" # Normal
+
+def slice_audio(audio_bytes, start_sec, end_sec, padding=1.5):
+    """Slices audio with padding to provide context using ffmpeg-python."""
+    try:
+        start_time = max(0, start_sec - padding)
+        duration = (end_sec + padding) - start_time
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_in, \
+             tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_out:
+            
+            temp_in.write(audio_bytes)
+            temp_in.flush()
+            
+            in_file_path = temp_in.name
+            out_file_path = temp_out.name
+
+        try:
+            (
+                ffmpeg
+                .input(in_file_path, ss=start_time)
+                .output(out_file_path, t=duration, format='wav', acodec='pcm_s16le')
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
+            )
+            
+            with open(out_file_path, "rb") as f:
+                sliced_bytes = f.read()
+                
+            return sliced_bytes
+            
+        finally:
+            if os.path.exists(in_file_path):
+                os.remove(in_file_path)
+            if os.path.exists(out_file_path):
+                os.remove(out_file_path)
+                
+    except ffmpeg.Error as e:
+        return None
+    except Exception as e:
+        return None
+
+def generate_srt(words_data):
+    """Generates SubRip Text (SRT) format."""
+    active_words = [w for w in words_data if not w.get("deleted", False)]
+    srt_content = ""
+    chunk_index = 1
+    chunk_words = []
+    
+    for i, word in enumerate(active_words):
+        chunk_words.append(word)
+        speaker_changed = i < len(active_words) - 1 and active_words[i+1]['speaker'] != word['speaker']
+        
+        if len(chunk_words) >= 10 or speaker_changed or i == len(active_words) - 1:
+            start_time = timedelta(seconds=chunk_words[0]['start'])
+            end_time = timedelta(seconds=chunk_words[-1]['end'])
+            
+            def format_time(td):
+                total_sec = int(td.total_seconds())
+                hours = total_sec // 3600
+                minutes = (total_sec % 3600) // 60
+                seconds = total_sec % 60
+                millisecs = int((td.total_seconds() - total_sec) * 1000)
+                return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millisecs:03d}"
+            
+            speaker_label = f"[דובר {chunk_words[0]['speaker']}] "
+            text = " ".join([w['word'] for w in chunk_words])
+            
+            srt_content += f"{chunk_index}\n"
+            srt_content += f"{format_time(start_time)} --> {format_time(end_time)}\n"
+            srt_content += f"{speaker_label}{text}\n\n"
+            
+            chunk_index += 1
+            chunk_words = []
+            
+    return srt_content
+
+# ==========================================
+# UI Layout
+# ==========================================
+
+with st.sidebar:
+    st.header("הגדרות")
+    
+    # 1. שולפים את המפתח מקובץ הסודות שיצרנו
+    secret_key = st.secrets.get("DEEPGRAM_API_KEY", "")
+    
+    # 2. שמים אותו כברירת מחדל (value) בתוך תיבת הטקסט!
+    api_key = st.text_input("Deepgram API Key", type="password", value=secret_key)
+    
+    st.caption("השג מפתח חינמי באתר console.deepgram.com")
+    
+    if st.button("איפוס מערכת (Clear Data)"):
+        st.session_state.words_data = []
+        st.session_state.audio_bytes = None
+        st.session_state.current_file_name = None
+        st.cache_data.clear()
+        st.rerun()
+
+st.subheader("1. הזנת אודיו")
+col_upload, col_lang = st.columns([7, 3])
+
+with col_upload:
+    uploaded_file = st.file_uploader("העלה קובץ אודיו (MP3, WAV, M4A, OGG)", type=["mp3", "wav", "m4a", "ogg"])
+
+with col_lang:
+    st.write("בחר את השפה המרכזית באודיו:")
+    language_choice = st.radio(
+        "שפה",
+        options=["he", "en"],
+        format_func=lambda x: "עברית (Hebrew)" if x == "he" else "אנגלית (English)",
+        label_visibility="collapsed"
+    )
+
+if uploaded_file and (st.session_state.current_file_name != uploaded_file.name):
+    st.session_state.words_data = []
+    st.session_state.audio_bytes = uploaded_file.read()
+    st.session_state.current_file_name = uploaded_file.name
+
+if st.button("תמלל עכשיו", type="primary") and st.session_state.audio_bytes:
+    if not api_key:
+        st.error("אנא הזן Deepgram API Key בסרגל הצד.")
+    else:
+        with st.spinner("מתמלל בעזרת Deepgram... (זה עשוי לקחת כמה שניות)"):
+            result = process_audio_cached(api_key, st.session_state.audio_bytes, language_choice)
+            
+            if isinstance(result, dict) and "error" in result:
+                 st.error(f"שגיאה בתמלול: {result['error']}")
+            elif isinstance(result, list):
+                if len(result) == 0:
+                    st.warning("התמלול הסתיים, אבל המודל לא זיהה שום מילים ברורות באודיו הזה.")
+                else:
+                    st.session_state.words_data = result
+                    st.success("התמלול עבר בהצלחה!")
+                    st.rerun()
+
+if st.session_state.words_data:
+    st.divider()
+    
+    col_viz, col_edit = st.columns([6, 4])
+    
+    active_words = [w for w in st.session_state.words_data if not w.get("deleted", False)]
+    
+    with col_viz:
+        st.subheader("2. תמלול (לחץ על מילה כדי לתקן)")
+        
+        current_speaker = None
+        html_text = "<div style='line-height: 2.2; font-size: 18px; direction: rtl;'>"
+        
+        for w in active_words:
+            if w["speaker"] != current_speaker:
+                if current_speaker is not None:
+                    html_text += "<br><br>" 
+                current_speaker = w["speaker"]
+                html_text += f"<strong style='color:#555;'>[דובר {current_speaker}]: </strong>"
+            
+            color = get_word_color(w["confidence"])
+            
+            # עטיפת המילה בקישור לחיץ עם אפקט ריחוף
+            html_text += f"<a href='#' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
+            html_text += f"<span style='background-color: {color}; padding: 3px 6px; border-radius: 4px; margin: 0 2px; transition: 0.2s;' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{w['word']}</span>"
+            html_text += "</a> "
+            
+        html_text += "</div>"
+        
+        # רכיב הקסם שקולט את הלחיצות מה-HTML ומעביר לפייתון
+        clicked_word_id = click_detector(html_text)
+    
+    with col_edit:
+        st.subheader("3. ממשק תיקון")
+        
+        # עכשיו ה-UI מחכה שהמשתמש ילחץ על מילה
+        if clicked_word_id:
+            selected_id = int(clicked_word_id)
+            word_obj = next((w for w in st.session_state.words_data if w["id"] == selected_id), None)
+            
+            if word_obj:
+                st.write(f"**מתקן את המילה:** `{word_obj['word']}` (דובר {word_obj['speaker']})")
+                st.caption("משמיע את המילה עם הקשר של 1.5 שניות לפני ואחרי.")
+                
+                sliced_audio = slice_audio(st.session_state.audio_bytes, word_obj["start"], word_obj["end"], padding=1.5)
+                if sliced_audio:
+                    st.audio(sliced_audio, format="audio/wav")
+                else:
+                    st.warning("לא ניתן לנגן אודיו חתוך (האם FFmpeg מותקן?)")
+                
+                alts = [word_obj['word']] + word_obj['alternatives']
+                chosen_alt = st.selectbox("הצעות המודל:", alts)
+                manual_text = st.text_input("תיקון ידני:", value=chosen_alt)
+                
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("✅ שמור תיקון", use_container_width=True):
+                        st.session_state.words_data[selected_id]["word"] = manual_text
+                        st.session_state.words_data[selected_id]["confidence"] = 1.0 # הופך לירוק!
+                        st.rerun()
+                
+                with col_btn2:
+                    if st.button("🗑️ מחק מילה (רעש/הזיה)", use_container_width=True):
+                        st.session_state.words_data[selected_id]["deleted"] = True
+                        st.rerun()
+        else:
+            # הודעת ברירת המחדל לפני שלוחצים
+            st.info("👈 לחץ על מילה כלשהי בטקסט מימין כדי לפתוח את ממשק התיקון שלה.")
+
+    st.divider()
+    st.subheader("4. ייצוא נתונים")
+    
+    col_ex1, col_ex2, col_ex3 = st.columns(3)
+    
+    final_text = " ".join([w["word"] for w in active_words])
+    
+    with col_ex1:
+        st.download_button(
+            label="📝 הורד תמלול נקי (TXT)",
+            data=final_text,
+            file_name="transcript.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+    
+    with col_ex2:
+        srt_data = generate_srt(active_words)
+        st.download_button(
+            label="🎬 הורד כתוביות (SRT)",
+            data=srt_data,
+            file_name="subtitles.srt",
+            mime="text/plain",
+            use_container_width=True
+        )
+        
+    with col_ex3:
+         json_data = json.dumps(active_words, ensure_ascii=False, indent=2)
+         st.download_button(
+            label="⚙️ הורד נתונים גולמיים (JSON)",
+            data=json_data,
+            file_name="data.json",
+            mime="application/json",
+            use_container_width=True
+        )
