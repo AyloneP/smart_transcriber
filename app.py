@@ -26,6 +26,9 @@ if "audio_bytes" not in st.session_state:
 if "current_file_name" not in st.session_state:
     st.session_state.current_file_name = None
 
+# מילות חלל נפוצות לסינון ויזואלי
+FILLERS = ["אה", "אממ", "אהה", "אמ", "um", "uh", "mhm", "mm", "ah", "er", "hmm"]
+
 # ==========================================
 # Helper Functions
 # ==========================================
@@ -40,6 +43,8 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
                 "tier": "nova-3", 
                 "language": "he",
                 "smart_format": "true",
+                "punctuate": "true",
+                "filler_words": "true",
                 "words": "true",
                 "diarize": "true"
             }
@@ -48,6 +53,8 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
                 "model": "nova-2",
                 "language": "en",
                 "smart_format": "true",
+                "punctuate": "true",
+                "filler_words": "true",
                 "words": "true",
                 "diarize": "true",
                 "alternatives": 3 
@@ -88,9 +95,13 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
             
             speaker = word_obj.get("speaker", 0)
             
+            final_word = word_obj.get("punctuated_word", word_obj["word"])
+            clean_word = word_obj["word"] 
+            
             words_list.append({
                 "id": i,
-                "word": word_obj["word"],
+                "word": final_word,
+                "clean_word": clean_word, 
                 "start": word_obj["start"],
                 "end": word_obj["end"],
                 "confidence": word_obj["confidence"],
@@ -272,9 +283,18 @@ if st.session_state.words_data:
             
             color = get_word_color(w["confidence"])
             
-            html_text += f"<a href='#' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-            html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{w['word']}</span>"
-            html_text += "</a> "
+            is_filler = w.get("clean_word", "").lower().strip(",.?!") in FILLERS
+            display_text = f"[{w['word']}]" if is_filler else w['word']
+            
+            # השינוי הקריטי: href='javascript:void(0);'
+            if is_filler:
+                html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
+                html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; opacity: 0.5;' onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='0.5'\"><i>{display_text}</i></span>"
+                html_text += "</a> "
+            else:
+                html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
+                html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{display_text}</span>"
+                html_text += "</a> "
             
             if i < len(active_words) - 1:
                 next_w = active_words[i+1]
@@ -332,6 +352,7 @@ if st.session_state.words_data:
                         new_word = {
                             "id": new_id,
                             "word": new_word_text,
+                            "clean_word": new_word_text,
                             "start": max(0.0, word_obj["start"] - 0.1),
                             "end": word_obj["start"],
                             "confidence": 1.0,
@@ -349,6 +370,7 @@ if st.session_state.words_data:
                         new_word = {
                             "id": new_id,
                             "word": new_word_text,
+                            "clean_word": new_word_text,
                             "start": word_obj["end"],
                             "end": word_obj["end"] + 0.1,
                             "confidence": 1.0,
