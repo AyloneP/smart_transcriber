@@ -13,19 +13,6 @@ from st_click_detector import click_detector
 # ==========================================
 st.set_page_config(page_title="Advanced STT - Human-in-the-Loop", layout="wide")
 
-# הזקת CSS חכם: הופך את עמודת התיקון ל"דביקה" כך שתלווה את המשתמש בגלילה
-st.markdown("""
-    <style>
-    /* מחפש את העמודה שיש בתוכה את העוגן שלנו, וגורם לה לרחף מול העיניים */
-    div[data-testid="column"]:has(#sticky-anchor) {
-        position: sticky;
-        top: 4rem;
-        align-self: flex-start;
-        z-index: 100;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🎙️ מערכת תמלול מתקדמת - Human-in-the-Loop")
 st.markdown("תמלול, זיהוי דוברים, ותיקון שגיאות אינטראקטיבי מבוסס Deepgram.")
 
@@ -284,45 +271,45 @@ if st.session_state.words_data:
     with col_viz:
         st.subheader("2. תמלול (לחץ על מילה כדי לתקן)")
         
-        current_speaker = None
-        html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl;'>"
-        
-        for i, w in enumerate(active_words):
-            if w["speaker"] != current_speaker:
-                if current_speaker is not None:
-                    html_text += "<br><br>" 
-                current_speaker = w["speaker"]
-                html_text += f"<strong style='color:#555;'>[דובר {current_speaker}]: </strong>"
+        # --- כאן נמצא הפתרון הקסום: תיבה נגללת (Container) שמקבעת את השאר למקום ---
+        with st.container(height=650):
+            current_speaker = None
+            # הוספנו פדינג תחתון כדי שהשורה האחרונה לא תוסתר על ידי פס הגלילה
+            html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl; padding-bottom: 30px;'>"
             
-            color = get_word_color(w["confidence"])
+            for i, w in enumerate(active_words):
+                if w["speaker"] != current_speaker:
+                    if current_speaker is not None:
+                        html_text += "<br><br>" 
+                    current_speaker = w["speaker"]
+                    html_text += f"<strong style='color:#555;'>[דובר {current_speaker}]: </strong>"
+                
+                color = get_word_color(w["confidence"])
+                
+                is_filler = w.get("clean_word", "").lower().strip(",.?!") in FILLERS
+                display_text = f"[{w['word']}]" if is_filler else w['word']
+                
+                if is_filler:
+                    html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
+                    html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; opacity: 0.5;' onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='0.5'\"><i>{display_text}</i></span>"
+                    html_text += "</a> "
+                else:
+                    html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
+                    html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{display_text}</span>"
+                    html_text += "</a> "
+                
+                if i < len(active_words) - 1:
+                    next_w = active_words[i+1]
+                    if next_w["speaker"] == w["speaker"]:
+                        gap = next_w["start"] - w["end"]
+                        if gap >= gap_threshold:
+                            html_text += f"<span style='color: #ff9800; font-size: 12px; margin: 0 4px; cursor: help;' title='שתיקה של {gap:.1f} שניות - ייתכן שהושמטה מילה'>[⏳]</span> "
+                
+            html_text += "</div>"
             
-            is_filler = w.get("clean_word", "").lower().strip(",.?!") in FILLERS
-            display_text = f"[{w['word']}]" if is_filler else w['word']
-            
-            if is_filler:
-                html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-                html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; opacity: 0.5;' onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='0.5'\"><i>{display_text}</i></span>"
-                html_text += "</a> "
-            else:
-                html_text += f"<a href='javascript:void(0);' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-                html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{display_text}</span>"
-                html_text += "</a> "
-            
-            if i < len(active_words) - 1:
-                next_w = active_words[i+1]
-                if next_w["speaker"] == w["speaker"]:
-                    gap = next_w["start"] - w["end"]
-                    if gap >= gap_threshold:
-                        html_text += f"<span style='color: #ff9800; font-size: 12px; margin: 0 4px; cursor: help;' title='שתיקה של {gap:.1f} שניות - ייתכן שהושמטה מילה'>[⏳]</span> "
-            
-        html_text += "</div>"
-        
-        clicked_word_id = click_detector(html_text)
+            clicked_word_id = click_detector(html_text)
     
     with col_edit:
-        # זה העוגן הנסתר! בגלל שהוא קיים בתוך העמודה הזו, היא הופכת לדביקה
-        st.markdown("<div id='sticky-anchor'></div>", unsafe_allow_html=True)
-        
         st.subheader("3. ממשק תיקון")
         
         if clicked_word_id:
