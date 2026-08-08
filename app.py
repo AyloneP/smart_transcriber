@@ -58,8 +58,8 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
                 "punctuate": "true",
                 "filler_words": "true",
                 "words": "true",
-                "diarize": "true",
-                "alternatives": 3 
+                "diarize": "true"
+                # הסרנו את "alternatives": 3 כי nova-2 לא תומך בזה יותר
             }
         
         headers = {
@@ -89,6 +89,7 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
         
         for i, word_obj in enumerate(primary_words):
             word_alts = set()
+            # אם יש חלופות (במודלים ישנים או בעברית), נוסיף אותן. באנגלית זה פשוט ידלג.
             for alt in alternatives[1:]:
                 words_in_alt = alt.get("words", [])
                 if i < len(words_in_alt):
