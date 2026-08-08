@@ -271,10 +271,8 @@ if st.session_state.words_data:
     with col_viz:
         st.subheader("2. תמלול (לחץ על מילה כדי לתקן)")
         
-        # --- כאן נמצא הפתרון הקסום: תיבה נגללת (Container) שמקבעת את השאר למקום ---
         with st.container(height=650):
             current_speaker = None
-            # הוספנו פדינג תחתון כדי שהשורה האחרונה לא תוסתר על ידי פס הגלילה
             html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl; padding-bottom: 30px;'>"
             
             for i, w in enumerate(active_words):
@@ -327,13 +325,20 @@ if st.session_state.words_data:
                 
                 alts = [word_obj['word']] + word_obj['alternatives']
                 chosen_alt = st.selectbox("הצעות המודל:", alts)
-                manual_text = st.text_input("תיקון ידני:", value=chosen_alt)
+                
+                # --- החלק החדש: שיוך למשתמש אחר ---
+                col_text, col_speaker = st.columns([3, 1])
+                with col_text:
+                    manual_text = st.text_input("תיקון ידני:", value=chosen_alt)
+                with col_speaker:
+                    new_speaker = st.number_input("דובר:", min_value=0, max_value=20, value=int(word_obj['speaker']), step=1)
                 
                 col_btn1, col_btn2 = st.columns(2)
                 
                 with col_btn1:
                     if st.button("✅ שמור תיקון", use_container_width=True):
                         st.session_state.words_data[selected_id]["word"] = manual_text
+                        st.session_state.words_data[selected_id]["speaker"] = new_speaker # מעדכן את הדובר
                         st.session_state.words_data[selected_id]["confidence"] = 1.0 
                         st.rerun()
                 
