@@ -6,7 +6,7 @@ import tempfile
 import ffmpeg
 import requests
 from datetime import timedelta
-from st_click_detector import click_detector  # הייבוא החדש שלנו!
+from st_click_detector import click_detector
 
 # ==========================================
 # Application Configuration
@@ -33,6 +33,7 @@ if "current_file_name" not in st.session_state:
 def process_audio_cached(api_key, audio_bytes, language_choice):
     """
     Sends audio directly to Deepgram REST API.
+    Uses specific model and tier combinations based on language selection.
     """
     try:
         url = "https://api.deepgram.com/v1/listen"
@@ -109,11 +110,11 @@ def process_audio_cached(api_key, audio_bytes, language_choice):
 def get_word_color(confidence):
     """Returns background color based on confidence score."""
     if confidence < 0.5:
-        return "#ff4b4b" # Red
+        return "#ff4b4b" # Red (מאוד לא בטוח)
     elif confidence <= 0.9:
-        return "#ffe14b" # Yellow
+        return "#ffe14b" # Yellow (קצת חושש)
     else:
-        return "transparent" # Normal
+        return "#f0f2f6" # אפור בהיר למילים בטוחות - כדי שייראו לחיצות!
 
 def slice_audio(audio_bytes, start_sec, end_sec, padding=1.5):
     """Slices audio with padding to provide context using ffmpeg-python."""
@@ -214,8 +215,7 @@ with st.sidebar:
         st.session_state.current_file_name = None
         st.cache_data.clear()
         st.rerun()
-    
-    
+
 st.subheader("1. הזנת אודיו")
 col_upload, col_lang = st.columns([7, 3])
 
@@ -264,7 +264,7 @@ if st.session_state.words_data:
         st.subheader("2. תמלול (לחץ על מילה כדי לתקן)")
         
         current_speaker = None
-        html_text = "<div style='line-height: 2.2; font-size: 18px; direction: rtl;'>"
+        html_text = "<div style='line-height: 2.5; font-size: 18px; direction: rtl;'>"
         
         for w in active_words:
             if w["speaker"] != current_speaker:
@@ -275,27 +275,24 @@ if st.session_state.words_data:
             
             color = get_word_color(w["confidence"])
             
-            # עטיפת המילה בקישור לחיץ עם אפקט ריחוף
             html_text += f"<a href='#' id='{w['id']}' style='text-decoration: none; color: inherit;'>"
-            html_text += f"<span style='background-color: {color}; padding: 3px 6px; border-radius: 4px; margin: 0 2px; transition: 0.2s;' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{w['word']}</span>"
+            # הוספנו אפקט הצללה בריחוף כדי שירגיש אפילו יותר כמו כפתור
+            html_text += f"<span style='background-color: {color}; padding: 4px 8px; border-radius: 6px; margin: 0 2px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);' onmouseover=\"this.style.opacity='0.6'\" onmouseout=\"this.style.opacity='1'\">{w['word']}</span>"
             html_text += "</a> "
             
         html_text += "</div>"
         
-        # רכיב הקסם שקולט את הלחיצות מה-HTML ומעביר לפייתון
         clicked_word_id = click_detector(html_text)
     
     with col_edit:
         st.subheader("3. ממשק תיקון")
         
-        # עכשיו ה-UI מחכה שהמשתמש ילחץ על מילה
         if clicked_word_id:
             selected_id = int(clicked_word_id)
             word_obj = next((w for w in st.session_state.words_data if w["id"] == selected_id), None)
             
             if word_obj:
-                st.write(f"**מתקן את המילה:** `{word_obj['word']}` (דובר {word_obj['speaker']})")
-                st.caption("משמיע את המילה עם הקשר של 1.5 שניות לפני ואחרי.")
+                st.write(f"**מילה נבחרת:** `{word_obj['word']}` (דובר {word_obj['speaker']})")
                 
                 sliced_audio = slice_audio(st.session_state.audio_bytes, word_obj["start"], word_obj["end"], padding=1.5)
                 if sliced_audio:
@@ -312,15 +309,58 @@ if st.session_state.words_data:
                 with col_btn1:
                     if st.button("✅ שמור תיקון", use_container_width=True):
                         st.session_state.words_data[selected_id]["word"] = manual_text
-                        st.session_state.words_data[selected_id]["confidence"] = 1.0 # הופך לירוק!
+                        st.session_state.words_data[selected_id]["confidence"] = 1.0 
                         st.rerun()
                 
                 with col_btn2:
-                    if st.button("🗑️ מחק מילה (רעש/הזיה)", use_container_width=True):
+                    if st.button("🗑️ מחק מילה", use_container_width=True):
                         st.session_state.words_data[selected_id]["deleted"] = True
                         st.rerun()
+                
+                # --- החלק החדש: הוספת מילה חסרה ---
+                st.divider()
+                st.write("🛠️ **המערכת השמיטה מילה?**")
+                st.caption("הקלד את המילה החסרה ולחץ איפה למקם אותה ביחס למילה שבחרת.")
+                new_word_text = st.text_input("המילה החסרה:")
+                
+                col_add1, col_add2 = st.columns(2)
+                with col_add1:
+                    if st.button("➕ הוסף לפני", use_container_width=True) and new_word_text:
+                        # יוצרים ID חדש לגמרי
+                        new_id = max([w["id"] for w in st.session_state.words_data]) + 1
+                        new_word = {
+                            "id": new_id,
+                            "word": new_word_text,
+                            "start": max(0.0, word_obj["start"] - 0.1),
+                            "end": word_obj["start"],
+                            "confidence": 1.0, # מילה שהוספנו ידנית היא תמיד ודאית
+                            "speaker": word_obj["speaker"],
+                            "alternatives": [],
+                            "deleted": False
+                        }
+                        # מכניסים לרשימה בדיוק לפני המילה שבחרנו
+                        idx = st.session_state.words_data.index(word_obj)
+                        st.session_state.words_data.insert(idx, new_word)
+                        st.rerun()
+                        
+                with col_add2:
+                    if st.button("➕ הוסף אחרי", use_container_width=True) and new_word_text:
+                        new_id = max([w["id"] for w in st.session_state.words_data]) + 1
+                        new_word = {
+                            "id": new_id,
+                            "word": new_word_text,
+                            "start": word_obj["end"],
+                            "end": word_obj["end"] + 0.1,
+                            "confidence": 1.0,
+                            "speaker": word_obj["speaker"],
+                            "alternatives": [],
+                            "deleted": False
+                        }
+                        # מכניסים לרשימה מיד אחרי המילה שבחרנו
+                        idx = st.session_state.words_data.index(word_obj)
+                        st.session_state.words_data.insert(idx + 1, new_word)
+                        st.rerun()
         else:
-            # הודעת ברירת המחדל לפני שלוחצים
             st.info("👈 לחץ על מילה כלשהי בטקסט מימין כדי לפתוח את ממשק התיקון שלה.")
 
     st.divider()
