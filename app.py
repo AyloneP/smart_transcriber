@@ -479,7 +479,7 @@ if st.session_state.words_data:
     st.divider()
     st.subheader("5. ניתוח חכם (AI)")
     with st.expander("🤖 יצירת סיכום / נקודות מפתח באמצעות תמליל השיחה"):
-        st.write("הזן מפתח API של Gemini כדי לנתח את הטקסט המתוקן (חינם ב-Google AI Studio).")
+        st.markdown("הזן מפתח API של Gemini כדי לנתח את הטקסט המתוקן. ניתן להוציא מפתח בחינם כאן: [Google AI Studio](https://aistudio.google.com/app/apikey)")
         gemini_key = st.text_input("Gemini API Key:", type="password")
         prompt_type = st.selectbox("מה תרצה להפיק מהתמלול?", ["סיכום כללי", "נקודות מפתח (Bullet points)", "ניתוח (אווירה ומסקנות)"])
         
